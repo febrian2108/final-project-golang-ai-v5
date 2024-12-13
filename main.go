@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"a21hc3NpZ25tZW50/service"
 
@@ -45,42 +47,39 @@ func main() {
 	router.Use(loggingMiddleware)
 
 	router.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
-		err := r.ParseMultipartForm(10 << 20)
+		// Ambil file dari request body
+		err := r.ParseMultipartForm(10 << 20) // Maksimal 10MB
 		if err != nil {
-			http.Error(w, "Error parsing form data: "+err.Error(), http.StatusBadRequest)
+			http.Error(w, "Failed to parse form", http.StatusBadRequest)
 			return
 		}
 
-		file, handler, err := r.FormFile("file")
+		// Ambil file dari form
+		file, _, err := r.FormFile("file")
 		if err != nil {
-			http.Error(w, "Error retrieving the file: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Failed to get file", http.StatusBadRequest)
 			return
 		}
 		defer file.Close()
 
-		if _, err := os.Stat("./uploads"); os.IsNotExist(err) {
-			err := os.Mkdir("./uploads", os.ModePerm)
-			if err != nil {
-				http.Error(w, "Error creating uploads directory: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		dst, err := os.Create("./uploads/" + handler.Filename)
+		// Membaca isi file
+		var builder strings.Builder
+		_, err = io.Copy(&builder, file)
 		if err != nil {
-			http.Error(w, "Failed to save file: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer dst.Close()
-
-		_, err = dst.ReadFrom(file)
-		if err != nil {
-			http.Error(w, "Failed to save file: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Failed to read file content", http.StatusInternalServerError)
 			return
 		}
 
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"message": "File uploaded successfully"})
+		// Proses file dan hitung konsumsi energi per ruangan
+		energyConsumption, err := fileService.ProcessFile(builder.String())
+		if err != nil {
+			http.Error(w, "Failed to process file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Kirimkan hasil sebagai JSON
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(energyConsumption)
 	}).Methods("POST")
 
 	router.HandleFunc("/chat", func(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +91,11 @@ func main() {
 		err := json.NewDecoder(r.Body).Decode(&payload)
 		if err != nil {
 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+
+		if payload.Context == "" || payload.Query == "" {
+			http.Error(w, "Context and query cannot be empty", http.StatusBadRequest)
 			return
 		}
 

@@ -23,6 +23,6 @@ type ChatResponse struct {
 }
 
 type MockClient struct {
-    Response *http.Response
-    Err      error
+	Response *http.Response
+	Err      error
 }
